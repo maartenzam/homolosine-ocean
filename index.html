@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Interrupted Homolosine Oceans</title>
+<script src="https://d3js.org/d3.v5.min.js"></script>
+<script src="https://d3js.org/d3-geo-projection.v2.min.js"></script>
+<script src="https://unpkg.com/topojson-client@3"></script>
+<body>
+
+<div style="position:relative;top:0;left:0; height:0" id="viz"></div>
+<div id="canvas"></div>
+<script>
+  d3.json("https://unpkg.com/visionscarto-world-atlas@0.0.6/world/110m_land.geojson").then(function(land) {
+    d3.json("https://gist.githubusercontent.com/mbostock/6713736/raw/e9f894d6bb066b9398cfdccff0c26732d12b9ef7/topo.json").then(function(world) {
+      const lobes = [
+        [
+          // northern hemisphere
+          [[-180, 0], [-130, 90], [-90, 0]],
+          [[-90, 0], [-30, 90], [60, 0]],
+          [[60, 0], [120, 90], [180, 0]]
+        ],
+        [
+          // southern hemisphere
+          [[-180, 0], [-120, -90], [-60, 0]],
+          [[-60, 0], [20, -90], [100, 0]],
+          [[100, 0], [140, -90], [180, 0]]
+        ]
+      ]
+      const projection = d3.geoInterrupt(d3.geoHomolosineRaw, lobes).rotate([-200, 0])
+      const width = 1024
+      const outline = {type: "Sphere"}
+      const [[x0, y0], [x1, y1]] = d3.geoPath(projection.fitWidth(width, outline)).bounds(outline);
+      const height = Math.ceil(y1 - y0),
+      l = Math.min(Math.ceil(x1 - x0), height);
+      projection.scale(projection.scale() * (l - 1) / l).precision(0.2);
+
+      const svg = d3.select("#viz")
+        .append("svg")
+        .attr("viewBox", [0, 0, width, height])
+        .style("font", "10px sans-serif")
+        .attr("width", width)
+        .attr("height", height);
+
+      const path = d3.geoPath().projection(projection);
+      var defs = svg.append("defs");
+
+      path.projection(projection);
+
+      svg
+        .append("defs")
+        .append("clipPath")
+        .attr("id", "sphere")
+        .append("path")
+        .attr("d", path({ type: "Sphere" }));
+
+      svg
+        .append("path")
+        .datum({ type: "Sphere" })
+        .attr("d", path)
+        .attr("fill", "none")
+        .attr("stroke", "#000");
+      svg
+        .append("path")
+        .datum(land)
+        .attr("class", "land")
+        .attr("clip-path", "url(#sphere)")
+        .attr("d", path)
+        .style("fill", "rgba(0,0,0,1)")
+        .style("stroke", "white")
+        .style("stroke-width", 0.5);
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width * devicePixelRatio;
+      canvas.height = height * devicePixelRatio;
+      canvas.style.width = `${width}px`;
+      canvas.value = canvas.getContext("webgl", { preserveDrawingBuffer: true });
+      d3.select("#canvas").append("canvas")
+
+      const canvas2 = document.createElement("canvas");
+      canvas2.width = 2;
+      canvas2.height = 2;
+      const gl2 = canvas2.getContext("webgl", { preserveDrawingBuffer: true });
+      const maxTextureSize = gl2.getParameter(gl2.MAX_TEXTURE_SIZE);
+      
+      const gl = canvas.value;
+
+      const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+        gl.shaderSource(vertexShader,
+          `
+      attribute vec2 a_vertex;
+
+      void main(void) {
+        gl_Position = vec4(a_vertex, 0.0, 1.0);
+      }
+      `);
+      gl.compileShader(vertexShader);
+      if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS))
+        throw new Error(gl.getShaderInfoLog(vertexShader));
+
+      const buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(
+        gl.ARRAY_BUFFER,
+        Float32Array.of(-1, -1, +1, -1, +1, +1, -1, +1),
+        gl.STATIC_DRAW
+      );
+
+      const inverseprojection = `
+      // inverse goode homolosine projection, oceans
+      float lambdamax = 180.0;
+      float lambdamin = -180.0;
+
+      float sinuMollweidePhi = 0.7109889596207567;
+      float sinuMollweideY = 0.0528035274542;
+      float cy = sqrt(2.0);
+      float cx = cy * 2.0 / c_pi;
+      float cp = c_pi;
+      float y1, lambda, phi;
+
+      if (abs(y) > sinuMollweidePhi) {
+        // mollweide invert
+        float y0 = y + sign(y) * sinuMollweideY;
+        y1 = asin(y0 / cy);
+        float y2 = (2.0 * y1 + sin(2.0 * y1)) / cp;
+        if (abs(y2) < 1.0) {
+          phi = asin(y2);
+        } else {
+          transparent = true;
+        }
+      } else {
+        // sinusoidal invert
+        lambda = x / cos(y);
+        y1 = y;
+        phi = y;
+      }
+
+      float deg2 = 0.0;
+      float deg = x * 180.0 / c_pi;
+
+      // a vec4 can hold up to 4 lobes (in this case we need only 3).
+      vec4 n, m;
+
+      // north lobes
+      if (y < 0.0) {
+        ${lobes[0]
+          .map(
+            (d, i) =>
+              `m[${i}] = ${d[1][0].toFixed(1)}; ` +
+              `n[${i}] = ${d[2][0].toFixed(1)};`
+          )
+          .join("\n        ")}
+      }
+      // south lobes
+      else {
+        ${lobes[1]
+          .map(
+            (d, i) =>
+              `m[${i}] = ${d[1][0].toFixed(1)}; ` +
+              `n[${i}] = ${d[2][0].toFixed(1)};`
+          )
+          .join("\n        ")}
+      }
+
+      float b, a = -180.0;
+      for (int i = 0; i < 4; i++) {
+        b = a;
+        a = n[i];
+        if (deg >= b && deg < a) {
+          lambdamax = a;
+          lambdamin = b;
+          deg2 = m[i];
+        }
+      }
+
+      if (abs(y) > sinuMollweidePhi) {
+        x -= (1.0 - cx * cos(y1)) * deg2 / 180.0 * c_pi;
+        lambda = x / (cx * cos(y1));
+      } else {
+        x -= (1.0 - cos(phi)) * deg2 / 180.0 * c_pi;
+        lambda = x / cos(y);
+      }
+
+      if (lambda * 180.0 / c_pi > lambdamax
+      || lambda * 180.0 / c_pi < lambdamin
+      || abs(phi * 180.0 / c_pi) > 90.0)
+        transparent = true;
+      `//inverseprojection
+
+      const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+        gl.shaderSource(
+          fragmentShader,
+          `
+      precision highp float;
+
+      uniform sampler2D u_image;
+      uniform vec2 u_translate;
+      uniform float u_scale;
+      uniform vec2 u_rotate;
+
+      const float c_pi = 3.14159265358979323846264;
+      const float c_halfPi = c_pi * 0.5;
+      const float c_twoPi = c_pi * 2.0;
+
+      void main(void) {
+        float cosphi0 = cos(-u_rotate.y);
+        float sinphi0 = sin(-u_rotate.y);
+      
+        float x = (gl_FragCoord.x - u_translate.x) / u_scale;
+        float y = (u_translate.y - gl_FragCoord.y) / u_scale;
+      
+        bool transparent = false;
+      
+        // inverse projection
+        ${inverseprojection}
+      
+        // inverse rotation
+        float cosphi = cos(phi);
+        float xa = cos(lambda) * cosphi;
+        float ya = sin(lambda) * cosphi;
+        float za = sin(phi);
+        lambda = atan(ya, xa * cosphi0 + za * sinphi0) - u_rotate.x;
+        phi = asin(za * cosphi0 - xa * sinphi0);
+      
+        gl_FragColor = texture2D(u_image, vec2((lambda + c_pi) / c_twoPi, (phi + c_halfPi) / c_pi));
+        if (transparent) {
+          gl_FragColor.a = 0.0;
+        }
+      }
+      `);
+      gl.compileShader(fragmentShader);
+        if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS))
+          throw new Error(gl.getShaderInfoLog(fragmentShader));
+
+      const program = gl.createProgram();
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS))
+        throw new Error(gl.getProgramInfoLog(program));
+
+      const a_vertex = gl.getAttribLocation(program, "a_vertex");
+      const u_translate = gl.getUniformLocation(program, "u_translate");
+      const u_scale = gl.getUniformLocation(program, "u_scale");
+      const u_rotate = gl.getUniformLocation(program, "u_rotate")
+
+      const texture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+
+      const w = Math.min(maxTextureSize, 4096), // it's better to upscale to 4096
+        h = w / 2;
+      /*const context = DOM.context2d(w, h, 1);
+      context.drawImage(
+        await FileAttachment(
+          "sea-surface-temperature-1782013-3600x1800.png"
+        ).image(),0,0,w,h);
+
+      const image = Object.assign(context.canvas, { style: "height: 40px;" });*/
+
+      loadimage = (url, w, h) =>
+        new Promise((resolve, reject) => {
+          const canvas = document.createElement("canvas");
+          const im = new Image();
+          im.src = url;
+          im.onload = function() {
+            w = w || im.naturalWidth;
+            h = h || Math.round(w * (im.naturalHeight / im.naturalWidth));
+            canvas.setAttribute("width", w);
+            canvas.setAttribute("height", h);
+            try {
+              const context = canvas.getContext("2d");
+              context.drawImage(im, 0, 0, w, h);
+              resolve(canvas);
+            } catch (e) {
+              reject(e);
+            }
+          };
+          im.onerror = reject;
+        })
+
+        async function draw() {
+          const canvas = Object.assign(await loadimage("files/test.png", 4096), {
+            style: "max-width: 200px"
+          })
+          
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+          gl.useProgram(program);
+          gl.enableVertexAttribArray(a_vertex);
+          gl.vertexAttribPointer(a_vertex, 2, gl.FLOAT, false, 0, 0);
+          gl.uniform1f(u_scale, 2 * projection.scale());
+          gl.uniform2f(u_translate, gl.canvas.width * 0.50, gl.canvas.height * 0.50);
+          gl.uniform2f(u_rotate, ...projection.rotate().map(d => (d * Math.PI) / 180));
+          gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+          gl.bindTexture(gl.TEXTURE_2D, texture);
+          gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
+        }
+        draw()
+
+  });
+});
+</script>
