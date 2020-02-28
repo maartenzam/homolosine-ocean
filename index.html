@@ -73,7 +73,7 @@
       canvas.height = height * devicePixelRatio;
       canvas.style.width = `${width}px`;
       canvas.value = canvas.getContext("webgl", { preserveDrawingBuffer: true });
-      d3.select("#canvas").append("canvas")
+      d3.select("#canvas").node().appendChild(canvas)
 
       const canvas2 = document.createElement("canvas");
       canvas2.width = 2;
