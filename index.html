@@ -281,10 +281,7 @@
         })
 
         async function draw() {
-          const canvas = Object.assign(await loadimage("files/test.png", 4096), {
-            style: "max-width: 200px"
-          })
-          
+          const canvas = await loadimage("files/test.png", 4096);
           gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
           gl.useProgram(program);
           gl.enableVertexAttribArray(a_vertex);
