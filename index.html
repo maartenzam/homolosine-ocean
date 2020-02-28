@@ -286,7 +286,7 @@
           gl.useProgram(program);
           gl.enableVertexAttribArray(a_vertex);
           gl.vertexAttribPointer(a_vertex, 2, gl.FLOAT, false, 0, 0);
-          gl.uniform1f(u_scale, 2 * projection.scale());
+          gl.uniform1f(u_scale, devicePixelRatio * projection.scale());
           gl.uniform2f(u_translate, gl.canvas.width * 0.50, gl.canvas.height * 0.50);
           gl.uniform2f(u_rotate, ...projection.rotate().map(d => (d * Math.PI) / 180));
           gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
